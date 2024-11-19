@@ -10,24 +10,15 @@ To enhance the resolution of your geospatial images using the SISR pipeline with
    
 python prep_geotiff_input.py path/to/your_input_image.tif path/to/output_directory
 
-vbnet
-Copy code
-
 2. Run Inference with the SwinIR Model:
 Execute the `inference.py` script to perform super-resolution (4x upscaling) on the preprocessed image using your pre-trained SwinIR model. This script efficiently handles both small and large images by managing memory during processing. Run the following command:
 
 python inference.py -m path/to/pre-trained_model.pth -i path/to/output_directory/your_input_image.png -o path/to/output_directory/your_output_image.srr.png
 
-mathematica
-Copy code
-
 3. Post-process and Save the Output Image:
 Use the `prep_geotiff_output.py` script to convert the super-resolved PNG image back to a GeoTIFF, restoring the original geospatial metadata. Run the following command:
 
 python prep_geotiff_output.py path/to/output_directory/your_output_image.srr.png path/to/output_directory/your_input_image.x4header.tif path/to/your_final_output_image.srr.tif
-
-arduino
-Copy code
 
 ## Example Usage of the SISR Pipeline
 
@@ -38,9 +29,6 @@ Use the `prep_geotiff_input.py` script to prepare your GeoTIFF image for super-r
 
 python prep_geotiff_input.py /data/landsat/LST_206024_20230614.tif /data/landsat/tmp
 
-javascript
-Copy code
-
 **Explanation:** This command takes the input image `/data/landsat/LST_206024_20230614.tif` and processes it, saving the rescaled PNG image and a header file in the temporary directory `/data/landsat/tmp`.
 
 2. Run Inference with the SwinIR Model:
@@ -48,17 +36,11 @@ Execute the `inference.py` script to perform super-resolution on the preprocesse
 
 python inference.py -m pre-trained-models/m-2_psnr.pth -i /data/landsat/tmp/LST_206024_20230614.png -o /data/landsat/tmp/LST_206024_20230614.srr.png
 
-javascript
-Copy code
-
 **Explanation:** This command loads the pre-trained model from `pre-trained-models/m-2_psnr.pth` and processes the preprocessed image `/data/landsat/tmp/LST_206024_20230614.png`, saving the super-resolved PNG image as `/data/landsat/tmp/LST_206024_20230614.srr.png`.
 
 3. Post-process and Save the Output Image:
 Use the `prep_geotiff_output.py` script to convert the super-resolved PNG image back to a GeoTIFF, restoring the original geospatial metadata.
 
 python prep_geotiff_output.py /data/landsat/tmp/LST_206024_20230614.srr.png /data/landsat/tmp/LST_206024_20230614.x4header.tif /data/landsat/LST_206024_20230614.srr.tif
-
-arduino
-Copy code
 
 **Explanation:** This command takes the super-resolved PNG image and the header file (containing geospatial information) from the temporary directory and generates the final GeoTIFF image `/data/landsat/LST_206024_20230614.srr.tif`.
