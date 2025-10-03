@@ -1,49 +1,97 @@
-# SISR
-A Pre-trained Single-Image Super-Resolution Toolbox for Mars and Earth Observations
+# SISR  
+**Single-Image Super-Resolution for Earth Observation and Planetary Remote Sensing**
 
-## Quick Start Guide for Single-Image Super-Resolution (SISR) Pipeline
+Research code developed by **Dr. Yu Tao (Surrey AI Imaging Limited)** for super-resolving thermal infrared (TIR/MWIR), visible band Earth Observation imagery, and Mars orbital datasets (HiRISE, CTX, HRSC, CaSSIS).  
 
-To enhance the resolution of your geospatial images using the SISR pipeline with the SwinIR model, follow these three key steps:
+This repository provides a pipeline to preprocess, upscale, and restore geospatial imagery using the SwinIR architecture. It is intended for **research purposes**.
 
-1. Preprocess the Input Image:
-   Use the `prep_geotiff_input.py` script to prepare your GeoTIFF image for super-resolution. This script validates that the input is a proper GeoTIFF with geospatial metadata, rescales pixel values to an appropriate range, and converts the image to PNG format suitable for the model. Run the following command:
-   
-python prep_geotiff_input.py path/to/your_input_image.tif path/to/output_directory
+---
 
-2. Run Inference with the SwinIR Model:
-Execute the `inference.py` script to perform super-resolution (4x upscaling) on the preprocessed image using your pre-trained SwinIR model. This script efficiently handles both small and large images by managing memory during processing. Run the following command:
+## Features
+- Preprocessing and validation of GeoTIFF inputs (EO and planetary datasets)  
+- 4× single-image super-resolution using SwinIR  
+- Memory-efficient inference for large images  
+- Restoration of geospatial metadata in GeoTIFF outputs  
+- Example workflows for both Earth and Mars remote sensing imagery  
 
-python inference.py -m path/to/pre-trained_model.pth -i path/to/output_directory/your_input_image.png -o path/to/output_directory/your_output_image.srr.png
+---
 
-All pre-trained weights can be downloaded from: https://drive.google.com/drive/folders/1KHGWjFf1ZkvSvsjYT-mCSusjUJpetQSW?usp=drive_link
-https://drive.google.com/drive/folders/1KHGWjFf1ZkvSvsjYT-mCSusjUJpetQSW?usp=drive_link
+## Installation
+Clone this repository and install required dependencies:
 
-3. Post-process and Save the Output Image:
-Use the `prep_geotiff_output.py` script to convert the super-resolved PNG image back to a GeoTIFF, restoring the original geospatial metadata. Run the following command:
+```bash
+git clone https://github.com/yutao3/SISR.git
+cd SISR
+pip install -r requirements.txt
+```
 
-python prep_geotiff_output.py path/to/output_directory/your_output_image.srr.png path/to/output_directory/your_input_image.x4header.tif path/to/your_final_output_image.srr.tif
+---
 
-## Example Usage of the SISR Pipeline
+## Quick Start
 
-Suppose you have an input GeoTIFF image named `LST_206024_20230614.tif` located in the `/data/landsat/` directory. You want to process this image using the SISR pipeline and store intermediate files in a temporary directory at `/data/landsat/tmp`. The final super-resolved image will be saved as `/data/landsat/LST_206024_20230614.srr.tif`. Here's how you can achieve this:
+### Step 1 – Preprocess Input GeoTIFF
+Prepare the input image and convert it to PNG format while saving geospatial metadata:
 
-1. Preprocess the Input Image:
-Use the `prep_geotiff_input.py` script to prepare your GeoTIFF image for super-resolution. This script checks for geospatial metadata, rescales pixel values, and converts the image to PNG format suitable for the model.
+```bash
+python prep_geotiff_input.py path/to/input_image.tif path/to/output_dir
+```
 
+---
+
+### Step 2 – Run Super-Resolution with SwinIR
+Run inference with a pre-trained SwinIR model:
+
+```bash
+python inference.py -m path/to/pretrained_model.pth                     -i path/to/output_dir/input_image.png                     -o path/to/output_dir/input_image.srr.png
+```
+
+Pre-trained weights are available here:  
+🔗 [Google Drive – SISR Models](https://drive.google.com/drive/folders/1KHGWjFf1ZkvSvsjYT-mCSusjUJpetQSW?usp=drive_link)
+
+---
+
+### Step 3 – Restore GeoTIFF Output
+Convert the super-resolved PNG back into a GeoTIFF with original metadata:
+
+```bash
+python prep_geotiff_output.py path/to/output_dir/input_image.srr.png                               path/to/output_dir/input_image.x4header.tif                               path/to/final_output_image.srr.tif
+```
+
+---
+
+## Example Workflow
+**Input:** `/data/landsat/LST_206024_20230614.tif`  
+**Intermediate directory:** `/data/landsat/tmp`  
+**Output:** `/data/landsat/LST_206024_20230614.srr.tif`
+
+```bash
+# Step 1 – Preprocess
 python prep_geotiff_input.py /data/landsat/LST_206024_20230614.tif /data/landsat/tmp
 
-**Explanation:** This command takes the input image `/data/landsat/LST_206024_20230614.tif` and processes it, saving the rescaled PNG image and a header file in the temporary directory `/data/landsat/tmp`.
+# Step 2 – Super-resolution inference
+python inference.py -m pre-trained-models/m-2_psnr.pth                     -i /data/landsat/tmp/LST_206024_20230614.png                     -o /data/landsat/tmp/LST_206024_20230614.srr.png
 
-2. Run Inference with the SwinIR Model:
-Execute the `inference.py` script to perform super-resolution on the preprocessed image. Ensure you specify the path to your pre-trained SwinIR model (`m-2_psnr.pth` in this example).
+# Step 3 – Postprocess and restore metadata
+python prep_geotiff_output.py /data/landsat/tmp/LST_206024_20230614.srr.png                               /data/landsat/tmp/LST_206024_20230614.x4header.tif                               /data/landsat/LST_206024_20230614.srr.tif
+```
 
-python inference.py -m pre-trained-models/m-2_psnr.pth -i /data/landsat/tmp/LST_206024_20230614.png -o /data/landsat/tmp/LST_206024_20230614.srr.png
+---
 
-**Explanation:** This command loads the pre-trained model from `pre-trained-models/m-2_psnr.pth` and processes the preprocessed image `/data/landsat/tmp/LST_206024_20230614.png`, saving the super-resolved PNG image as `/data/landsat/tmp/LST_206024_20230614.srr.png`.
+## Acknowledgements
+- This code builds on the **[SwinIR network architecture](https://github.com/JingyunLiang/SwinIR)** by *Jingyun Liang et al.*  
+- Research developed at **Surrey AI Imaging Limited (SAIIL)** for applications in Earth Observation and Mars planetary science.
 
-3. Post-process and Save the Output Image:
-Use the `prep_geotiff_output.py` script to convert the super-resolved PNG image back to a GeoTIFF, restoring the original geospatial metadata.
+---
 
-python prep_geotiff_output.py /data/landsat/tmp/LST_206024_20230614.srr.png /data/landsat/tmp/LST_206024_20230614.x4header.tif /data/landsat/LST_206024_20230614.srr.tif
+## License
+This repository is released for **research and educational purposes**.  
+Please contact **Surrey AI Imaging Limited** for any enquiries regarding collaborations or extended usage.
 
-**Explanation:** This command takes the super-resolved PNG image and the header file (containing geospatial information) from the temporary directory and generates the final GeoTIFF image `/data/landsat/LST_206024_20230614.srr.tif`.
+---
+
+## Citation
+If you use this code in your research, please cite:
+
+> Tao, Y. (Surrey AI Imaging Limited). *Single-Image Super-Resolution for EO and Mars Imagery (SISR toolbox).* GitHub repository, 2025. https://github.com/yutao3/SISR
+
+---
