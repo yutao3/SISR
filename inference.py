@@ -40,13 +40,24 @@ def define_model(model_path):
     return model
 
 def preprocess_image(path):
-    img = cv2.imread(path, cv2.IMREAD_COLOR)
-    if img is None:
+    # Read with UNCHANGED to preserve original number of channels
+    img_original = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+    if img_original is None:
         raise FileNotFoundError(f"Image file not found at path: {path}")
+
+    # Determine if original image is single channel
+    if len(img_original.shape) == 2:
+        # Single channel, convert to 3-channel for the model
+        is_single_channel = True
+        img = cv2.cvtColor(img_original, cv2.COLOR_GRAY2BGR)
+    else:
+        is_single_channel = False
+        img = img_original
+
     img = img.astype(np.float32) / 255.
     img = np.transpose(img[:, :, [2, 1, 0]], (2, 0, 1))  # HWC-BGR to CHW-RGB
     img = torch.from_numpy(img).float().unsqueeze(0)  # CHW-RGB to NCHW-RGB
-    return img
+    return img, is_single_channel
 
 def process_small_image(img_lq, model, device):
     print("Processing small image without GPU/CPU memory management...")
@@ -118,7 +129,7 @@ def main():
     model_path = args.model_path
 
     print("Preprocessing image...")
-    img_lq = preprocess_image(args.input)
+    img_lq, is_single_channel = preprocess_image(args.input)
 
     # Determine if image is small or large based on tile count
     tile_size = 512
@@ -135,9 +146,13 @@ def main():
     output = output.squeeze().float().cpu().clamp_(0, 1).numpy()
     output = np.transpose(output[[2, 1, 0], :, :], (1, 2, 0))  # CHW-RGB to HWC-BGR
     output = (output * 255.0).round().astype(np.uint8)  # float32 to uint8
+
+    # Convert output back to single channel if input was single channel
+    if is_single_channel:
+        output = cv2.cvtColor(output, cv2.COLOR_BGR2GRAY)
+
     cv2.imwrite(args.output, output)
     print("Output image saved.")
 
 if __name__ == '__main__':
     main()
-
