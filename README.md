@@ -15,6 +15,9 @@ Execute the `inference.py` script to perform super-resolution (4x upscaling) on 
 
 python inference.py -m path/to/pre-trained_model.pth -i path/to/output_directory/your_input_image.png -o path/to/output_directory/your_output_image.srr.png
 
+All pre-trained weights can be downloaded from: https://drive.google.com/drive/folders/1KHGWjFf1ZkvSvsjYT-mCSusjUJpetQSW?usp=drive_link
+https://drive.google.com/drive/folders/1KHGWjFf1ZkvSvsjYT-mCSusjUJpetQSW?usp=drive_link
+
 3. Post-process and Save the Output Image:
 Use the `prep_geotiff_output.py` script to convert the super-resolved PNG image back to a GeoTIFF, restoring the original geospatial metadata. Run the following command:
 
