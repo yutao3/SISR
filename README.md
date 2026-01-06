@@ -175,24 +175,6 @@ Per‑script constraints:
 
 ## Examples
 
-### Minimal 3‑step example
-```bash
-# paths
-IMG=/data/landsat/LST_206024_20230614.tif
-TMP=/data/landsat/tmp
-OUT=/data/landsat
-W=pre-trained-models/m-2_psnr.pth
-
-# 1) prepare
-python prep_geotiff_input.py $IMG $TMP
-
-# 2) inference
-python inference.py -m $W -i $TMP/LST_206024_20230614.png -o $TMP/LST_206024_20230614.srr.png
-
-# 3) GeoTIFF
-python prep_geotiff_output.py $TMP/LST_206024_20230614.srr.png $TMP/LST_206024_20230614.x4header.tif $OUT/LST_206024_20230614.srr.tif $IMG
-```
-
 ### One‑liner (Sentinel‑2 RGB → COG, clean intermediates)
 ```bash
 python sisr_auto_sentinel-2_rgb.py S2_RGB.jp2 out_dir pre-trained-models/m-1_xxx.pth -COG -CLEAN
@@ -216,6 +198,24 @@ python sisr_auto_s2albedo_single_band.py s2_albedo.tif out_dir pre-trained-model
 ### PM2.5 single‑band (experimental)
 ```bash
 python sisr_auto_pm25_single_band.py pm25.tif out_dir pre-trained-models/m-4_xxx.pth -COG -CLEAN
+```
+
+### Manual 3‑step example
+```bash
+# paths
+IMG=/data/landsat/LST_206024_20230614.tif
+TMP=/data/landsat/tmp
+OUT=/data/landsat
+W=pre-trained-models/m-2_psnr.pth
+
+# 1) prepare
+python prep_geotiff_input.py $IMG $TMP
+
+# 2) inference
+python inference.py -m $W -i $TMP/LST_206024_20230614.png -o $TMP/LST_206024_20230614.srr.png
+
+# 3) GeoTIFF
+python prep_geotiff_output.py $TMP/LST_206024_20230614.srr.png $TMP/LST_206024_20230614.x4header.tif $OUT/LST_206024_20230614.srr.tif $IMG
 ```
 
 ---
@@ -266,5 +266,5 @@ python sisr_auto_pm25_single_band.py pm25.tif out_dir pre-trained-models/m-4_xxx
 
 ## License
 
-Research-only usage. Contact **Surrey AI Imaging Limited** for commercial licensing inquiries.
+Research-only usage. Contact **Surrey AI Imaging Limited** for other usage.
 
