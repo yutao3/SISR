@@ -249,15 +249,15 @@ python sisr_auto_pm25_single_band.py pm25.tif out_dir pre-trained-models/m-4_xxx
 
 ## Acknowledgements & Citation
 
+- This work is funded by the ESA GTIF UKIF project (2024-2026).
 - This work uses and acknowledges the **SwinIR** architecture: https://github.com/JingyunLiang/SwinIR  
 - If you find this repo useful in research, please cite the repo and SwinIR accordingly.
 
 ```
 @software{tao_sisr_toolbox,
-  author  = {Yu Tao},
-  title   = {SISR: A Pre-trained Single-Image Super-Resolution Toolbox for Mars and Earth Observations},
-  year    = {2025},
-  note    = {Surrey AI Imaging Limited},
+  author  = {Yu Tao, Jan-Peter Muller},
+  title   = {A Unified Vision Transformer Framework for Super-Resolution Across Optical and Thermal EO Sensors},
+  year    = {2026},
   url     = {https://github.com/yutao3/SISR}
 }
 ```
