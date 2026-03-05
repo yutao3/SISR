@@ -1,4 +1,4 @@
-# sisr_auto_pm25_single_band.py
+# sisr_auto_pm25_single_band_v2.py
 # -------------------------------------------------------------
 # Additional Super-resolution pipeline for single-band PM2.5 map
 # with per-tile dynamic range stretching (1-255), automatic
@@ -52,19 +52,20 @@ def stretch_to_byte(src_tif: str, dst_png: str) -> tuple[float, float]:
         (min_original, max_original) collected from valid pixels only.
     """
     ds = gdal.Open(src_tif)
+    if ds is None:
+        raise RuntimeError(f"Failed to open input: {src_tif}")
+
     rb = ds.GetRasterBand(1)
     nod = rb.GetNoDataValue()
     arr = rb.ReadAsArray()
 
     # Exclude nodata and invalid values from statistics
-    # This is important for Float32 rasters that may contain NaNs, and for nodata=NaN.
+    # Important for Float32 rasters that may contain NaNs, and for nodata=NaN.
     valid = np.isfinite(arr)
 
     if nod is None:
-        # no extra filter needed
         pass
     else:
-        # Handle nodata that could be NaN (Float32)
         try:
             nod_is_nan = isinstance(nod, float) and np.isnan(nod)
         except Exception:
@@ -75,22 +76,36 @@ def stretch_to_byte(src_tif: str, dst_png: str) -> tuple[float, float]:
         # if nodata is NaN, np.isfinite already excludes it
 
     if not np.any(valid):
+        ds = None
         raise RuntimeError(f"No valid pixels found in tile for statistics: {src_tif}")
 
     mn = float(arr[valid].min())
     mx = float(arr[valid].max())
 
+    # If mn == mx, -scale becomes degenerate; avoid failure by widening slightly.
+    # (Keeping behaviour effectively unchanged for non-flat tiles.)
+    if not np.isfinite(mn) or not np.isfinite(mx):
+        ds = None
+        raise RuntimeError(f"Non-finite min/max found (mn={mn}, mx={mx}) for {src_tif}")
+
+    if mx <= mn:
+        # Flat tile: keep a tiny range to satisfy GDAL scaling
+        mx = mn + 1e-6
+
     # Write PNG for network input
-    gdal.Translate(
-        dst_png,
-        ds,
-        options=gdal.TranslateOptions(
-            format="PNG",
-            outputType=gdal.GDT_Byte,
-            # Use flat 4-element scaleParams for single band to avoid wrapper parsing issues
-            scaleParams=[mn, mx, 1, 255],
-        ),
-    )
+    # Use command-style options to avoid TranslateOptions(scaleParams=...) parsing issues in some builds.
+    opts = [
+        "-of", "PNG",
+        "-ot", "Byte",
+        "-scale", str(mn), str(mx), "1", "255",
+    ]
+
+    out_ds = gdal.Translate(dst_png, ds, options=opts)
+    if out_ds is None:
+        ds = None
+        raise RuntimeError(f"gdal.Translate failed when creating PNG: {dst_png}")
+
+    out_ds = None
     ds = None
     return mn, mx
 
@@ -140,11 +155,16 @@ def png_to_geotiff(
     """
     # ---- load SRR PNG
     img = cv2.imread(srr_png, cv2.IMREAD_UNCHANGED)
+    if img is None:
+        raise RuntimeError(f"Failed to read SRR PNG: {srr_png}")
     if img.ndim == 3:                        # safety: strip possible RGB
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # ---- load x4 header & geo-info
     hdr_ds  = gdal.Open(header_tif)
+    if hdr_ds is None:
+        raise RuntimeError(f"Failed to open header GeoTIFF: {header_tif}")
+
     info    = get_geo_info(hdr_ds)
     nod     = info["nodata"]
     hdr_arr = hdr_ds.ReadAsArray()
