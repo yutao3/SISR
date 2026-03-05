@@ -1,4 +1,4 @@
-# sisr_auto_pm25_single_band_v2.py
+# sisr_auto_pm25_single_band.py
 # -------------------------------------------------------------
 # Additional Super-resolution pipeline for single-band PM2.5 map
 # with per-tile dynamic range stretching (1-255), automatic
@@ -44,7 +44,7 @@ def expand_nodata_mask(mask: np.ndarray, iterations: int = 1) -> np.ndarray:
 # -----------------------------------------------------------------------------
 
 def stretch_to_byte(src_tif: str, dst_png: str) -> tuple[float, float]:
-    """Translate *src_tif* -> 8-bit *dst_png* with values 1-255.
+    """Translate *src_tif* → 8-bit *dst_png* with values 1-255.
 
     Returns
     -------
@@ -52,58 +52,30 @@ def stretch_to_byte(src_tif: str, dst_png: str) -> tuple[float, float]:
         (min_original, max_original) collected from valid pixels only.
     """
     ds = gdal.Open(src_tif)
-    if ds is None:
-        raise RuntimeError(f"Failed to open input: {src_tif}")
-
     rb = ds.GetRasterBand(1)
     nod = rb.GetNoDataValue()
     arr = rb.ReadAsArray()
 
-    # Exclude nodata and invalid values from statistics
-    # Important for Float32 rasters that may contain NaNs, and for nodata=NaN.
-    valid = np.isfinite(arr)
-
-    if nod is None:
-        pass
-    else:
-        try:
-            nod_is_nan = isinstance(nod, float) and np.isnan(nod)
-        except Exception:
-            nod_is_nan = False
-
-        if not nod_is_nan:
-            valid &= (arr != nod)
-        # if nodata is NaN, np.isfinite already excludes it
-
-    if not np.any(valid):
-        ds = None
-        raise RuntimeError(f"No valid pixels found in tile for statistics: {src_tif}")
-
+    # Exclude nodata from statistics (KEEP AS ORIGINAL)
+    valid = arr != (0 if nod is None else nod)
     mn = float(arr[valid].min())
     mx = float(arr[valid].max())
 
-    # If mn == mx, -scale becomes degenerate; avoid failure by widening slightly.
-    # (Keeping behaviour effectively unchanged for non-flat tiles.)
-    if not np.isfinite(mn) or not np.isfinite(mx):
-        ds = None
-        raise RuntimeError(f"Non-finite min/max found (mn={mn}, mx={mx}) for {src_tif}")
-
-    if mx <= mn:
-        # Flat tile: keep a tiny range to satisfy GDAL scaling
-        mx = mn + 1e-6
-
     # Write PNG for network input
-    # Use command-style options to avoid TranslateOptions(scaleParams=...) parsing issues in some builds.
+    #
+    # MINIMAL CHANGE:
+    # Avoid gdal.TranslateOptions(scaleParams=...) because it can fail to parse
+    # and produces "Too many command options '1'" / invalid options objects in some builds.
+    # Use command-style option list instead (same behaviour as gdal_translate).
     opts = [
         "-of", "PNG",
         "-ot", "Byte",
         "-scale", str(mn), str(mx), "1", "255",
     ]
-
     out_ds = gdal.Translate(dst_png, ds, options=opts)
     if out_ds is None:
         ds = None
-        raise RuntimeError(f"gdal.Translate failed when creating PNG: {dst_png}")
+        raise RuntimeError("gdal.Translate failed when creating stretched PNG.")
 
     out_ds = None
     ds = None
@@ -120,7 +92,7 @@ def _match_mean_std(src: np.ndarray, ref: np.ndarray, mask: np.ndarray) -> np.nd
     ref_vals = ref[mask].astype(np.float64)
 
     if src_vals.size == 0:
-        # pathological tile (fully nodata) - skip
+        # pathological tile (fully nodata) – skip
         return src
 
     mean_s, std_s = src_vals.mean(), src_vals.std()
@@ -135,8 +107,55 @@ def _match_mean_std(src: np.ndarray, ref: np.ndarray, mask: np.ndarray) -> np.nd
 
 
 # -----------------------------------------------------------------------------
-# 3.  End-to-end helper: PNG -> GeoTIFF with reverse-scaling, harmonisation
-#     and a 4-pixel rim replacement taken from the x4-header
+# 3.  End-to-end helper: PNG → GeoTIFF with reverse scaling & harmonisation
+# -----------------------------------------------------------------------------
+
+"""
+def png_to_geotiff(srr_png: str, header_tif: str, out_tif: str, original_min: float, original_max: float):
+    # Write the SRR *srr_png* to *out_tif* with original dynamic range and mean/σ harmonised against *header_tif*.
+    # ---- load SRR PNG (network result)
+    img = cv2.imread(srr_png, cv2.IMREAD_UNCHANGED)
+    if img.ndim == 3:
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    hdr_ds = gdal.Open(header_tif)
+    info = get_geo_info(hdr_ds)
+    nod = info["nodata"]
+    hdr_arr = hdr_ds.ReadAsArray()
+    hdr_ds = None
+
+    # Build mask (dilated) on header nodata
+    mask_nodata = hdr_arr == nod
+    mask_valid = ~expand_nodata_mask(mask_nodata, iterations=1)
+
+    # ---- reverse linear stretch 1-255 → original units
+    srr_arr = img.astype(np.float64)
+    srr_arr = original_min + (srr_arr - 1.0) * (original_max - original_min) / 254.0
+
+    # ---- mean/σ harmonisation (only on valid data)
+    srr_arr_harmonised = _match_mean_std(srr_arr, hdr_arr, mask_valid)
+
+    reinstate nodata exactly
+    srr_arr_harmonised[mask_nodata] = nod
+
+    # ---- cast to original dtype & write GeoTIFF
+    np_dtype = gdal_array.GDALTypeCodeToNumericTypeCode(info["dtype"])
+    out_arr = srr_arr_harmonised.astype(np_dtype)
+
+    drv = gdal.GetDriverByName("GTiff")
+    xsize, ysize = info["size"]
+    ds_out = drv.Create(out_tif, xsize, ysize, 1, info["dtype"])
+    ds_out.SetGeoTransform(info["gt"])
+    ds_out.SetProjection(info["proj"])
+    rb = ds_out.GetRasterBand(1)
+    rb.WriteArray(out_arr)
+    rb.SetNoDataValue(nod)
+    ds_out = None
+"""
+
+# -----------------------------------------------------------------------------
+# 3.  End-to-end helper: PNG → GeoTIFF with reverse-scaling, harmonisation
+#     …and now a 4-pixel “halo” replacement taken from the x4-header
 # -----------------------------------------------------------------------------
 def png_to_geotiff(
         srr_png: str,
@@ -150,21 +169,16 @@ def png_to_geotiff(
 
     1. Reverse the 1-255 stretch back to the original dynamic range
     2. Match mean / std to the x4-header (valid data only)
-    3. Replace the first 4-pixel rim around nodata with the
+    3. *New*: replace the first 4-pixel rim around nodata with the
        corresponding pixels from the x4-header to hide edge artefacts
     """
     # ---- load SRR PNG
     img = cv2.imread(srr_png, cv2.IMREAD_UNCHANGED)
-    if img is None:
-        raise RuntimeError(f"Failed to read SRR PNG: {srr_png}")
     if img.ndim == 3:                        # safety: strip possible RGB
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
     # ---- load x4 header & geo-info
     hdr_ds  = gdal.Open(header_tif)
-    if hdr_ds is None:
-        raise RuntimeError(f"Failed to open header GeoTIFF: {header_tif}")
-
     info    = get_geo_info(hdr_ds)
     nod     = info["nodata"]
     hdr_arr = hdr_ds.ReadAsArray()
@@ -176,14 +190,14 @@ def png_to_geotiff(
     mask_border = (expand_nodata_mask(mask_nodata, iterations=4)   # 4-px rim
                    & ~mask_nodata)
 
-    # ---- reverse 8-bit stretch -> original units (float64 for accuracy)
+    # ---- reverse 8-bit stretch → original units (float64 for accuracy)
     srr_arr = img.astype(np.float64)
     srr_arr = original_min + (srr_arr - 1.0) * (original_max - original_min) / 254.0
 
     # ---- mean / σ harmonisation on valid data
     srr_arr = _match_mean_std(srr_arr, hdr_arr, mask_valid)
 
-    # ---- copy 4-pixel rim from header to suppress halo artefacts
+    # ---- NEW: copy 4-pixel rim from header to suppress halo artefacts
     srr_arr[mask_border] = hdr_arr[mask_border]
 
     # ---- reinstate nodata exactly
@@ -204,8 +218,9 @@ def png_to_geotiff(
     ds_out    = None
 
 
+
 # -----------------------------------------------------------------------------
-# 4.  Pre-processing: convert JP2 -> GeoTIFF and (optionally) tile
+# 4.  Pre-processing: convert JP2 → GeoTIFF & (optionally) tile
 # -----------------------------------------------------------------------------
 
 def convert_jp2_to_tif(input_path: str, output_dir: str) -> str:
@@ -247,7 +262,7 @@ def mosaic_tiles(tile_paths: list[str], output_path: str):
 # -----------------------------------------------------------------------------
 
 def prepare_inputs(tile_tif: str, work_dir: str):
-    """Create x4 header GeoTIFF and stretched PNG for *tile_tif*."""
+    """Create x4 header GeoTIFF & stretched PNG for *tile_tif*."""
     base = os.path.splitext(os.path.basename(tile_tif))[0]
 
     # 5.1 Upsampled x4 header (GeoTIFF, same dtype as input)
@@ -265,7 +280,7 @@ def prepare_inputs(tile_tif: str, work_dir: str):
         ),
     )
 
-    # 5.2 8-bit PNG and collect per-tile min/max
+    # 5.2 8-bit PNG + collect per-tile min/max
     png_path = os.path.join(work_dir, base + ".png")
     orig_min, orig_max = stretch_to_byte(tile_tif, png_path)
 
@@ -280,7 +295,7 @@ def run_inference(png_in: str, weights: str, work_dir: str):
     res = subprocess.run(["python", "inference.py", "-m", weights, "-i", png_in, "-o", srr_png], capture_output=True, text=True)
     if res.returncode != 0:
         raise RuntimeError(res.stderr)
-    print(f"Inference completed in {time.time() - start:.1f} s -> {srr_png}")
+    print(f"Inference completed in {time.time() - start:.1f} s → {srr_png}")
     return srr_png, time.time() - start
 
 
@@ -288,13 +303,13 @@ def process_tile(tile_tif: str, out_dir: str, weights: str):
     """Full pipeline for one *tile_tif*. Returns (final_tif_path, tmp_paths, dt_infer)."""
     base = os.path.splitext(os.path.basename(tile_tif))[0]
 
-    # 1 Prepare inputs
+    # 1️⃣ Prepare inputs
     png_in, hdr_tif, mn, mx = prepare_inputs(tile_tif, out_dir)
 
-    # 2 Neural inference
+    # 2️⃣ Neural inference
     srr_png, dt_inf = run_inference(png_in, weights, out_dir)
 
-    # 3 Convert PNG -> GeoTIFF with reverse scaling and harmonisation
+    # 3️⃣ Convert PNG → GeoTIFF with reverse scaling & harmonisation
     final_tif = os.path.join(out_dir, base + ".srr.tif")
     png_to_geotiff(srr_png, hdr_tif, final_tif, mn, mx)
 
@@ -346,7 +361,7 @@ def main():
         print("Model mismatch for M-2/M-4: expected weights compatible to similar dataset.")
         sys.exit(1)
 
-    # JP2 -> GeoTIFF if needed
+    # JP2 → GeoTIFF if needed
     if inp_path.lower().endswith(".jp2"):
         inp_path = convert_jp2_to_tif(inp_path, out_dir)
 
@@ -366,7 +381,7 @@ def main():
     if max(xsz, ysz) > 3000:
         tiles = tile_image(inp_path, out_dir)
         for idx, tile in enumerate(tiles, 1):
-            print(f"\n- Processing tile {idx}/{len(tiles)} -")
+            print(f"\n— Processing tile {idx}/{len(tiles)} —")
             out_tif, tmp, dt_inf = process_tile(tile, out_dir, weights)
             sr_tiles.append(out_tif)
             orig_tiles.append(tile)
