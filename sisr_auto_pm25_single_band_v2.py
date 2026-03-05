@@ -1,4 +1,4 @@
-# sisr_auto_pm25_single_band.py
+# sisr_auto_pm25_single_band_v2.py
 # -------------------------------------------------------------
 # Additional Super-resolution pipeline for single-band PM2.5 map
 # with per-tile dynamic range stretching (1-255), automatic
@@ -63,21 +63,21 @@ def stretch_to_byte(src_tif: str, dst_png: str) -> tuple[float, float]:
 
     # Write PNG for network input
     #
-    # MINIMAL CHANGE:
-    # Avoid gdal.TranslateOptions(scaleParams=...) because it can fail to parse
-    # and produces "Too many command options '1'" / invalid options objects in some builds.
-    # Use command-style option list instead (same behaviour as gdal_translate).
-    opts = [
+    # MINIMAL CHANGE (GDAL wrapper fix only):
+    # Use command-line style options through TranslateOptions(options=[...])
+    # instead of scaleParams=..., and do NOT pass a raw list to gdal.Translate.
+    translate_opts = gdal.TranslateOptions(options=[
         "-of", "PNG",
         "-ot", "Byte",
         "-scale", str(mn), str(mx), "1", "255",
-    ]
-    out_ds = gdal.Translate(dst_png, ds, options=opts)
+    ])
+
+    out_ds = gdal.Translate(dst_png, ds, options=translate_opts)
     if out_ds is None:
         ds = None
         raise RuntimeError("gdal.Translate failed when creating stretched PNG.")
-
     out_ds = None
+
     ds = None
     return mn, mx
 
@@ -107,53 +107,6 @@ def _match_mean_std(src: np.ndarray, ref: np.ndarray, mask: np.ndarray) -> np.nd
 
 
 # -----------------------------------------------------------------------------
-# 3.  End-to-end helper: PNG → GeoTIFF with reverse scaling & harmonisation
-# -----------------------------------------------------------------------------
-
-"""
-def png_to_geotiff(srr_png: str, header_tif: str, out_tif: str, original_min: float, original_max: float):
-    # Write the SRR *srr_png* to *out_tif* with original dynamic range and mean/σ harmonised against *header_tif*.
-    # ---- load SRR PNG (network result)
-    img = cv2.imread(srr_png, cv2.IMREAD_UNCHANGED)
-    if img.ndim == 3:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-    hdr_ds = gdal.Open(header_tif)
-    info = get_geo_info(hdr_ds)
-    nod = info["nodata"]
-    hdr_arr = hdr_ds.ReadAsArray()
-    hdr_ds = None
-
-    # Build mask (dilated) on header nodata
-    mask_nodata = hdr_arr == nod
-    mask_valid = ~expand_nodata_mask(mask_nodata, iterations=1)
-
-    # ---- reverse linear stretch 1-255 → original units
-    srr_arr = img.astype(np.float64)
-    srr_arr = original_min + (srr_arr - 1.0) * (original_max - original_min) / 254.0
-
-    # ---- mean/σ harmonisation (only on valid data)
-    srr_arr_harmonised = _match_mean_std(srr_arr, hdr_arr, mask_valid)
-
-    reinstate nodata exactly
-    srr_arr_harmonised[mask_nodata] = nod
-
-    # ---- cast to original dtype & write GeoTIFF
-    np_dtype = gdal_array.GDALTypeCodeToNumericTypeCode(info["dtype"])
-    out_arr = srr_arr_harmonised.astype(np_dtype)
-
-    drv = gdal.GetDriverByName("GTiff")
-    xsize, ysize = info["size"]
-    ds_out = drv.Create(out_tif, xsize, ysize, 1, info["dtype"])
-    ds_out.SetGeoTransform(info["gt"])
-    ds_out.SetProjection(info["proj"])
-    rb = ds_out.GetRasterBand(1)
-    rb.WriteArray(out_arr)
-    rb.SetNoDataValue(nod)
-    ds_out = None
-"""
-
-# -----------------------------------------------------------------------------
 # 3.  End-to-end helper: PNG → GeoTIFF with reverse-scaling, harmonisation
 #     …and now a 4-pixel “halo” replacement taken from the x4-header
 # -----------------------------------------------------------------------------
@@ -169,7 +122,7 @@ def png_to_geotiff(
 
     1. Reverse the 1-255 stretch back to the original dynamic range
     2. Match mean / std to the x4-header (valid data only)
-    3. *New*: replace the first 4-pixel rim around nodata with the
+    3. replace the first 4-pixel rim around nodata with the
        corresponding pixels from the x4-header to hide edge artefacts
     """
     # ---- load SRR PNG
@@ -197,7 +150,7 @@ def png_to_geotiff(
     # ---- mean / σ harmonisation on valid data
     srr_arr = _match_mean_std(srr_arr, hdr_arr, mask_valid)
 
-    # ---- NEW: copy 4-pixel rim from header to suppress halo artefacts
+    # ---- copy 4-pixel rim from header to suppress halo artefacts
     srr_arr[mask_border] = hdr_arr[mask_border]
 
     # ---- reinstate nodata exactly
@@ -216,7 +169,6 @@ def png_to_geotiff(
     rb.WriteArray(out_arr)
     rb.SetNoDataValue(nod)
     ds_out    = None
-
 
 
 # -----------------------------------------------------------------------------
