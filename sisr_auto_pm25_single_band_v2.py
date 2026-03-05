@@ -1,8 +1,8 @@
-# sisr_auto_pm25_single_band_v2.py
+# sisr_auto_pm25_single_band.py
 # -------------------------------------------------------------
-# Additional Super-resolution pipeline for single-band PM2.5 map
-# with per-tile dynamic range stretching (1-255), automatic
-# reverse-scaling, mean/σ harmonisation against the input geoheader,
+# Additional Super‑resolution pipeline for single‑band PM2.5 map
+# with per‑tile dynamic range stretching (1‑255), automatic
+# reverse‑scaling, mean/σ harmonisation against the input geoheader,
 # and nodata safety check for UInt16 and Float32 data.
 # -------------------------------------------------------------
 
@@ -40,11 +40,11 @@ def expand_nodata_mask(mask: np.ndarray, iterations: int = 1) -> np.ndarray:
 
 
 # -----------------------------------------------------------------------------
-# 1.  Stretch tile to 1-255 (nodata preserved) before inference
+# 1.  Stretch tile to 1‑255 (nodata preserved) before inference
 # -----------------------------------------------------------------------------
 
 def stretch_to_byte(src_tif: str, dst_png: str) -> tuple[float, float]:
-    """Translate *src_tif* → 8-bit *dst_png* with values 1-255.
+    """Translate *src_tif* → 8‑bit *dst_png* with values 1‑255.
 
     Returns
     -------
@@ -56,28 +56,21 @@ def stretch_to_byte(src_tif: str, dst_png: str) -> tuple[float, float]:
     nod = rb.GetNoDataValue()
     arr = rb.ReadAsArray()
 
-    # Exclude nodata from statistics (KEEP AS ORIGINAL)
+    # Exclude nodata from statistics
     valid = arr != (0 if nod is None else nod)
     mn = float(arr[valid].min())
     mx = float(arr[valid].max())
 
     # Write PNG for network input
-    #
-    # MINIMAL CHANGE (GDAL wrapper fix only):
-    # Use command-line style options through TranslateOptions(options=[...])
-    # instead of scaleParams=..., and do NOT pass a raw list to gdal.Translate.
-    translate_opts = gdal.TranslateOptions(options=[
-        "-of", "PNG",
-        "-ot", "Byte",
-        "-scale", str(mn), str(mx), "1", "255",
-    ])
-
-    out_ds = gdal.Translate(dst_png, ds, options=translate_opts)
-    if out_ds is None:
-        ds = None
-        raise RuntimeError("gdal.Translate failed when creating stretched PNG.")
-    out_ds = None
-
+    gdal.Translate(
+        dst_png,
+        ds,
+        options=gdal.TranslateOptions(
+            format="PNG",
+            outputType=gdal.GDT_Byte,
+            scaleParams=[[mn, mx, 1, 255]],
+        ),
+    )
     ds = None
     return mn, mx
 
@@ -99,7 +92,7 @@ def _match_mean_std(src: np.ndarray, ref: np.ndarray, mask: np.ndarray) -> np.nd
     mean_r, std_r = ref_vals.mean(), ref_vals.std()
 
     if std_s < 1e-6:
-        return src  # avoid divide-by-zero, tile is flat anyway
+        return src  # avoid divide‑by‑zero, tile is flat anyway
 
     scale = std_r / std_s
     out = (src.astype(np.float64) - mean_s) * scale + mean_r
@@ -122,7 +115,7 @@ def png_to_geotiff(
 
     1. Reverse the 1-255 stretch back to the original dynamic range
     2. Match mean / std to the x4-header (valid data only)
-    3. replace the first 4-pixel rim around nodata with the
+    3. *New*: replace the first 4-pixel rim around nodata with the
        corresponding pixels from the x4-header to hide edge artefacts
     """
     # ---- load SRR PNG
@@ -150,7 +143,7 @@ def png_to_geotiff(
     # ---- mean / σ harmonisation on valid data
     srr_arr = _match_mean_std(srr_arr, hdr_arr, mask_valid)
 
-    # ---- copy 4-pixel rim from header to suppress halo artefacts
+    # ---- NEW: copy 4-pixel rim from header to suppress halo artefacts
     srr_arr[mask_border] = hdr_arr[mask_border]
 
     # ---- reinstate nodata exactly
@@ -172,8 +165,43 @@ def png_to_geotiff(
 
 
 # -----------------------------------------------------------------------------
-# 4.  Pre-processing: convert JP2 → GeoTIFF & (optionally) tile
+# 4.  Pre‑processing: convert JP2 → GeoTIFF, clean values & (optionally) tile
 # -----------------------------------------------------------------------------
+
+def preprocess_raster(input_file: str, output_file: str) -> str:
+    """Map nodata and outliers outside [0, 100] to -9999.0 without modifying valid values."""
+    print("Step 0.5: Pre-processing to standardise nodata and clamp valid range [0, 100]…")
+    ds = gdal.Open(input_file, gdal.GA_ReadOnly)
+    if ds is None:
+        raise RuntimeError(f"Could not open {input_file} for preprocessing.")
+    
+    band = ds.GetRasterBand(1)
+    unified_nodata = -9999.0
+    
+    data = band.ReadAsArray().astype(np.float32)
+    existing_nodata = band.GetNoDataValue()
+    
+    # Replace pixel values outside the valid range [0, 100] along with NaNs and existing nodata
+    mask = (data < 0) | (data > 100) | np.isnan(data)
+    if existing_nodata is not None:
+        mask |= (data == existing_nodata)
+        
+    data[mask] = unified_nodata
+
+    driver = gdal.GetDriverByName("GTiff")
+    out_ds = driver.Create(output_file, ds.RasterXSize, ds.RasterYSize, 1, gdal.GDT_Float32)
+    out_ds.SetGeoTransform(ds.GetGeoTransform())
+    out_ds.SetProjection(ds.GetProjection())
+
+    out_band = out_ds.GetRasterBand(1)
+    out_band.SetNoDataValue(unified_nodata)
+    out_band.WriteArray(data)
+    out_band.FlushCache()
+
+    ds = None
+    out_ds = None
+    return output_file
+
 
 def convert_jp2_to_tif(input_path: str, output_dir: str) -> str:
     print("Step 0: Converting JP2 to GeoTIFF…")
@@ -209,8 +237,9 @@ def mosaic_tiles(tile_paths: list[str], output_path: str):
     gdal.Warp(output_path, tile_paths, options=gdal.WarpOptions(format="GTiff"))
     print(f"Final mosaic written to: {output_path}")
 
+
 # -----------------------------------------------------------------------------
-# 5.  Per-tile SRR processing
+# 5.  Per‑tile SRR processing
 # -----------------------------------------------------------------------------
 
 def prepare_inputs(tile_tif: str, work_dir: str):
@@ -232,7 +261,7 @@ def prepare_inputs(tile_tif: str, work_dir: str):
         ),
     )
 
-    # 5.2 8-bit PNG + collect per-tile min/max
+    # 5.2 8‑bit PNG + collect per‑tile min/max
     png_path = os.path.join(work_dir, base + ".png")
     orig_min, orig_max = stretch_to_byte(tile_tif, png_path)
 
@@ -270,7 +299,7 @@ def process_tile(tile_tif: str, out_dir: str, weights: str):
 
 
 # -----------------------------------------------------------------------------
-# 6.  House-keeping helpers
+# 6.  House‑keeping helpers
 # -----------------------------------------------------------------------------
 
 def safe_delete(paths):
@@ -299,7 +328,7 @@ def main():
 
     t0 = time.time()
 
-    print("### PM2.5 Single-Band Super-Resolution (experimental) ###")
+    print("### PM2.5 Single‑Band Super‑Resolution (experimental) ###")
 
     if not os.path.isfile(inp_path):
         print("Error: input file not found"); sys.exit(1)
@@ -307,27 +336,36 @@ def main():
         print("Error: weights file not found"); sys.exit(1)
     os.makedirs(out_dir, exist_ok=True)
 
-    # Sanity check on model
-    base_weights = os.path.splitext(os.path.basename(weights))[0]
-    if not base_weights.startswith(("m-2", "m-4")):
-        print("Model mismatch for M-2/M-4: expected weights compatible to similar dataset.")
-        sys.exit(1)
-
-    # JP2 → GeoTIFF if needed
-    if inp_path.lower().endswith(".jp2"):
-        inp_path = convert_jp2_to_tif(inp_path, out_dir)
-
-    ds_in = gdal.Open(inp_path)
-    dtype_name = gdal.GetDataTypeName(ds_in.GetRasterBand(1).DataType)
-    if ds_in.RasterCount != 1 or dtype_name not in ("UInt16", "Float32"):
-        print("Error: expected single-band UInt16 or Float32 raster."); sys.exit(1)
-    xsz, ysz = ds_in.RasterXSize, ds_in.RasterYSize
-    ds_in = None
-
     inference_total = 0.0
     temp_files: list[str] = []
     sr_tiles: list[str] = []
     orig_tiles: list[str] = []
+
+    # Sanity check on model
+    base_weights = os.path.splitext(os.path.basename(weights))[0]
+    if not base_weights.startswith(("m-2", "m-4")):
+        print("Model mismatch for M‑2/M-4: expected weights compatible to similar dataset.")
+        sys.exit(1)
+
+    # JP2 → GeoTIFF if needed
+    if inp_path.lower().endswith(".jp2"):
+        jp2_tif = convert_jp2_to_tif(inp_path, out_dir)
+        temp_files.append(jp2_tif)
+        inp_path = jp2_tif
+
+    # PREPROCESS: Standardise Nodata & Range
+    base_name = os.path.splitext(os.path.basename(inp_path))[0]
+    prepped_tif = os.path.join(out_dir, base_name + "_prepped.tif")
+    preprocess_raster(inp_path, prepped_tif)
+    temp_files.append(prepped_tif)
+    inp_path = prepped_tif
+
+    ds_in = gdal.Open(inp_path)
+    dtype_name = gdal.GetDataTypeName(ds_in.GetRasterBand(1).DataType)
+    if ds_in.RasterCount != 1 or dtype_name not in ("UInt16", "Float32"):
+        print("Error: expected single‑band UInt16 or Float32 raster."); sys.exit(1)
+    xsz, ysz = ds_in.RasterXSize, ds_in.RasterYSize
+    ds_in = None
 
     # Choose tiling threshold as before (>3k px)
     if max(xsz, ysz) > 3000:
@@ -340,7 +378,7 @@ def main():
             temp_files.extend(tmp)
             inference_total += dt_inf
 
-        mosaic_path = os.path.join(out_dir, os.path.splitext(os.path.basename(inp_path))[0] + ".srr.tif")
+        mosaic_path = os.path.join(out_dir, os.path.splitext(os.path.basename(args[0]))[0] + ".srr.tif")
         mosaic_tiles(sr_tiles, mosaic_path)
         final_output = mosaic_path
         temp_files.extend(sr_tiles)
@@ -351,7 +389,7 @@ def main():
         inference_total += dt_inf
 
     if cog:
-        print("Converting to Cloud-Optimised GeoTIFF…")
+        print("Converting to Cloud‑Optimised GeoTIFF…")
         cog_out = os.path.splitext(final_output)[0] + ".cog.tif"
         gdal.Translate(cog_out, final_output, options=gdal.TranslateOptions(format="COG"))
         final_output = cog_out
